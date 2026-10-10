@@ -41,12 +41,12 @@ def resolve_csv_path(user_path: str) -> Path | None:
         return BUNDLED_CSV
     return None
 
-# Prefer e2e / query2 PU columns (final_ph_in_date_key logic), then ext L1 dashboard export
-COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume", "fm_created")
-D0_COLS = ("d0_shipments", "cal_d0_picked", "fm_d0_picked", "created_d0_attempt", "created_bd_d0_picked")
-D1_COLS = ("d1_shipments", "cal_d1_picked", "fm_d1_picked", "created_d1_attempt", "created_bd_d1_picked")
-D2_COLS = ("d2_shipments", "cal_d2_plus_picked", "fm_d1_plus_picked", "created_d1_plus_attempt", "created_bd_d2_plus_picked")
-PENDING_COLS = ("pending_shipments", "cal_no_phin", "fm_created_unpicked", "ph_in_unpicked", "created_bd_no_phin")
+# Prefer calendar cohort (warroom ~90% D0), then query2 PU, then legacy warroom export
+COHORT_DENOM = ("cal_created_volume", "total_shipments", "created_volume", "fm_created")
+D0_COLS = ("cal_d0_picked", "d0_shipments", "fm_d0_picked", "created_d0_attempt", "created_bd_d0_picked")
+D1_COLS = ("cal_d1_picked", "d1_shipments", "fm_d1_picked", "created_d1_attempt", "created_bd_d1_picked")
+D2_COLS = ("cal_d2_plus_picked", "d2_shipments", "fm_d1_plus_picked", "created_d1_plus_attempt", "created_bd_d2_plus_picked")
+PENDING_COLS = ("cal_no_phin", "pending_shipments", "fm_created_unpicked", "ph_in_unpicked", "created_bd_no_phin")
 PICKED_COLS = ("total_picked", "fm_picked", "ph_in_picked")
 
 # Columns kept as text; everything else in the export is coerced to numeric for sums.
@@ -86,7 +86,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str, _schema_rev: int = 3) -> pd.DataFrame:
+def load_data(csv_path: str, _schema_rev: int = 4) -> pd.DataFrame:
     path = Path(csv_path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -174,10 +174,11 @@ def agg_table(df: pd.DataFrame, keys: list[str], as_pct: bool) -> pd.DataFrame:
     t = df.groupby(keys, as_index=False)[measures].sum(numeric_only=True)
     if as_pct:
         t["D0 %"] = safe_pct(t["D0 PH-in"], t["Created"])
+        t["D0+D1 %"] = safe_pct(t["D0 PH-in"] + t["D1 PH-in"], t["Created"])
         t["D1 %"] = safe_pct(t["D1 PH-in"], t["Created"])
         t["D2+ %"] = safe_pct(t["D2+ PH-in"], t["Created"])
         t["Pending %"] = safe_pct(t["Pending PH-in"], t["Created"])
-        show = keys + ["D0 %", "D1 %", "D2+ %", "Pending %", "Created"]
+        show = keys + ["D0 %", "D0+D1 %", "D1 %", "D2+ %", "Pending %", "Created"]
         return t[show].sort_values("Created", ascending=False)
     return t.sort_values("Created", ascending=False)
 
@@ -185,7 +186,7 @@ def agg_table(df: pd.DataFrame, keys: list[str], as_pct: bool) -> pd.DataFrame:
 # ── Data ──────────────────────────────────────────────────────────
 with st.expander("Data source", expanded=False):
     st.caption(
-        "FDP: `QUERY_FM_PU_E2E.txt` (NL query2 PU). Cloud uses bundled CSV or upload; override with `FM_DASHBOARD_CSV`."
+        "FDP: `QUERY_FM_CAL_D0_EXPORT.sql` (calendar cal_d0 PH-in). Cloud uses bundled CSV or upload; override with `FM_DASHBOARD_CSV`."
     )
     csv_path_input = st.text_input("CSV path (local / server)", value=default_csv_path())
     upload = st.file_uploader("Or upload FDP export (.csv)", type=["csv"])
@@ -293,7 +294,7 @@ if enriched.empty:
 st.caption(
     f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
     f"**Clients:** {', '.join(sel_clients)} · "
-    "D0/D1/D2+ = PH-in lag buckets (query2 export or legacy fm_d*_picked) · D0 % = D0 / created"
+    "Calendar PH-in lag (cal_d0 / cal_d1 / cal_d2+) · D0 % = same-day · D0+D1 % ≈ warroom ~90% headline"
 )
 
 st.subheader("By client")
