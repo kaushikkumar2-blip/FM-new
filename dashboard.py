@@ -42,12 +42,12 @@ def resolve_csv_path(user_path: str) -> Path | None:
     return None
 
 # Prefer e2e / query2 PU columns (final_ph_in_date_key logic), then ext L1 dashboard export
-COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume")
-D0_COLS = ("d0_shipments", "cal_d0_picked", "created_d0_attempt", "created_bd_d0_picked")
-D1_COLS = ("d1_shipments", "cal_d1_picked", "created_d1_attempt", "created_bd_d1_picked")
-D2_COLS = ("d2_shipments", "cal_d2_plus_picked", "created_d1_plus_attempt", "created_bd_d2_plus_picked")
-PENDING_COLS = ("pending_shipments", "cal_no_phin", "created_bd_no_phin")
-PICKED_COLS = ("total_picked",)
+COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume", "fm_created")
+D0_COLS = ("d0_shipments", "cal_d0_picked", "fm_d0_picked", "created_d0_attempt", "created_bd_d0_picked")
+D1_COLS = ("d1_shipments", "cal_d1_picked", "fm_d1_picked", "created_d1_attempt", "created_bd_d1_picked")
+D2_COLS = ("d2_shipments", "cal_d2_plus_picked", "fm_d1_plus_picked", "created_d1_plus_attempt", "created_bd_d2_plus_picked")
+PENDING_COLS = ("pending_shipments", "cal_no_phin", "fm_created_unpicked", "ph_in_unpicked", "created_bd_no_phin")
+PICKED_COLS = ("total_picked", "fm_picked", "ph_in_picked")
 
 
 def pick_col(df, *candidates):
@@ -67,6 +67,8 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
         "cal_d0_picked", "cal_d1_picked", "cal_d2_plus_picked", "cal_no_phin",
         "created_bd_d0_picked", "created_bd_d1_picked", "created_bd_d2_plus_picked", "created_bd_no_phin",
         "created_d0_attempt", "created_d1_attempt", "created_d1_plus_attempt",
+        "fm_created", "fm_picked", "fm_created_unpicked", "fm_d0_picked", "fm_d1_picked", "fm_d1_plus_picked",
+        "ph_in_unpicked", "ph_in_picked", "d0_attempt", "d1_attempt", "d1_plus_attempt",
     ]
     for c in num_like:
         if c in df.columns:
@@ -284,7 +286,7 @@ if enriched.empty:
 st.caption(
     f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
     f"**Clients:** {', '.join(sel_clients)} · "
-    "D0/D1/D2+ = query2 PU lag (final PH-in vs create on NL L1) · D0 % = d0_shipments / created"
+    "D0/D1/D2+ = PH-in lag buckets (query2 export or legacy fm_d*_picked) · D0 % = D0 / created"
 )
 
 st.subheader("By client")
