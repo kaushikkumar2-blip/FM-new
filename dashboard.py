@@ -1,238 +1,257 @@
-import streamlit as st
-import pandas as pd
+import calendar
+from datetime import date
+
 import numpy as np
+import pandas as pd
+import streamlit as st
 
-st.set_page_config(page_title="Pickup Hub Dashboard", layout="wide", page_icon="📦")
+st.set_page_config(
+    page_title="FM Client / Hub",
+    layout="wide",
+    page_icon="📦",
+    initial_sidebar_state="collapsed",
+)
 
-CSV_PATH = "8a296c1ba2cacc19409c6fb7a2d79640.csv"
+# Export from QUERY_FM_PU_E2E.txt on FDP (e2e D0 logic). Old ext L1 dashboard CSV understates D0 ~20%.
+DEFAULT_CSV = r"C:\Users\kaushik.kumar2\Downloads\6e556544069d681fb4869517a0249d65.csv"
 
-NUMERIC_COLS = [
-    "fm_created", "fm_picked", "fm_created_unpicked",
-    "ph_in_volume", "ph_in_picked", "ph_in_unpicked",
-    "cron_present_rtd", "cron_pending_pickup",
-    "cron_status_created", "cron_status_ofp", "cron_status_reattempt",
-    "pick_thru_rate", "d0_pick_thru_rate", "d1_pick_thru_rate",
-    "ph_in_pick_rate", "cron_present_pick_rate",
-    "d0_attempt", "d1_attempt", "d1_plus_attempt", "d1_attempt_rate",
-    "fm_d0_picked", "fm_d1_picked", "fm_d1_plus_picked", "zero_attempt_rto_num",
-]
+# Prefer e2e / query2 PU columns (final_ph_in_date_key logic), then ext L1 dashboard export
+COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume")
+D0_COLS = ("d0_shipments", "cal_d0_picked", "created_d0_attempt", "created_bd_d0_picked")
+D1_COLS = ("d1_shipments", "cal_d1_picked", "created_d1_attempt", "created_bd_d1_picked")
+D2_COLS = ("d2_shipments", "cal_d2_plus_picked", "created_d1_plus_attempt", "created_bd_d2_plus_picked")
+PENDING_COLS = ("pending_shipments", "cal_no_phin", "created_bd_no_phin")
+PICKED_COLS = ("total_picked",)
 
-RATE_COLS = {
-    "pick_thru_rate", "d0_pick_thru_rate", "d1_pick_thru_rate",
-    "ph_in_pick_rate", "cron_present_pick_rate", "d1_attempt_rate",
-}
 
-@st.cache_data(show_spinner="Loading data...")
-def load_data():
-    df = pd.read_csv(CSV_PATH, dtype={"pickup_hub_name": str, "pickup_hub_city": str,
-                                      "pickup_hub_zone": str, "seller_type": str,
-                                      "payment_type": str, "reporting_date": str})
+def pick_col(df, *candidates):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+@st.cache_data(show_spinner="Loading FDP export…")
+def load_data(csv_path: str) -> pd.DataFrame:
+    df = pd.read_csv(csv_path, dtype=str)
+    if "merchant_code" in df.columns and "seller_type" not in df.columns:
+        df["seller_type"] = df["merchant_code"]
     df["reporting_date"] = pd.to_datetime(df["reporting_date"], errors="coerce")
-    for c in NUMERIC_COLS:
+    num_like = [
+        "total_shipments", "total_picked", "d0_shipments", "d1_shipments", "d2_shipments", "pending_shipments",
+        "created_volume", "cal_created_volume",
+        "cal_d0_picked", "cal_d1_picked", "cal_d2_plus_picked", "cal_no_phin",
+        "created_bd_d0_picked", "created_bd_d1_picked", "created_bd_d2_plus_picked", "created_bd_no_phin",
+        "created_d0_attempt", "created_d1_attempt", "created_d1_plus_attempt",
+    ]
+    for c in num_like:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-    df["pickup_hub_name"] = df["pickup_hub_name"].fillna("Unknown")
-    df["pickup_hub_city"] = df["pickup_hub_city"].fillna("Unknown")
-    df["pickup_hub_zone"] = df["pickup_hub_zone"].fillna("Unknown")
+    for c in ("pickup_hub_name", "pickup_hub_city", "pickup_hub_zone"):
+        if c in df.columns:
+            df[c] = df[c].fillna("Unknown")
     return df
 
-df = load_data()
 
-# ── Sidebar Filters ──────────────────────────────────────────────
-st.sidebar.title("📦 Filters")
+def safe_pct(num, den):
+    return np.where(den > 0, (num / den * 100).round(1), 0.0)
 
-dates = df["reporting_date"].dropna().dt.date
-min_d, max_d = dates.min(), dates.max()
-date_range = st.sidebar.date_input("Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d)
 
-zones = sorted(df["pickup_hub_zone"].dropna().unique())
-zone_sel = st.sidebar.multiselect("Zone", zones, default=zones)
+def daily_created_totals(df: pd.DataFrame, clients: list[str]) -> dict[date, float]:
+    created_c = pick_col(df, *COHORT_DENOM)
+    if not created_c:
+        return {}
+    sub = df[df["seller_type"].isin(clients)] if clients else df
+    g = sub.groupby(sub["reporting_date"].dt.date)[created_c].sum()
+    return {k: float(v) for k, v in g.items()}
 
-cities_pool = sorted(df[df["pickup_hub_zone"].isin(zone_sel)]["pickup_hub_city"].dropna().unique()) if zone_sel else sorted(df["pickup_hub_city"].dropna().unique())
-city_sel = st.sidebar.multiselect("City", cities_pool)
 
-seller_types = sorted(df["seller_type"].dropna().unique())
-seller_sel = st.sidebar.multiselect("Seller Type", seller_types)
+def render_month_calendar(
+    daily_map: dict[date, float],
+    year: int,
+    month: int,
+    selected: date,
+    in_range: set[date],
+):
+    st.markdown(f"**{date(year, month, 1).strftime('%B %Y')}** — click a day (numbers = created for selected clients)")
+    header = st.columns(7)
+    for i, label in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+        header[i].markdown(f"**{label}**")
 
-payment_sel = st.sidebar.radio("Payment Type", ["All", "prepaid", "cod"], horizontal=True)
+    cal = calendar.Calendar(firstweekday=0)
+    for week in cal.monthdayscalendar(year, month):
+        cols = st.columns(7)
+        for i, day_num in enumerate(week):
+            if day_num == 0:
+                cols[i].write("")
+                continue
+            d = date(year, month, day_num)
+            vol = int(daily_map.get(d, 0))
+            has_data = d in in_range
+            label = f"{day_num}\n{vol:,}" if vol else str(day_num)
+            btn_type = "primary" if d == selected else "secondary"
+            disabled = not has_data
+            if cols[i].button(
+                label,
+                key=f"cal_{year}_{month}_{day_num}",
+                use_container_width=True,
+                type=btn_type,
+                disabled=disabled,
+            ):
+                st.session_state.sel_date = d
+                st.rerun()
 
-# ── Apply Filters ────────────────────────────────────────────────
-mask = pd.Series(True, index=df.index)
 
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    mask &= df["reporting_date"].dt.date.between(date_range[0], date_range[1])
-elif isinstance(date_range, tuple) and len(date_range) == 1:
-    mask &= df["reporting_date"].dt.date == date_range[0]
+def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    created_c = pick_col(df, *COHORT_DENOM)
+    d0_c, d1_c, d2_c, pend_c, picked_c = (
+        pick_col(df, *D0_COLS),
+        pick_col(df, *D1_COLS),
+        pick_col(df, *D2_COLS),
+        pick_col(df, *PENDING_COLS),
+        pick_col(df, *PICKED_COLS),
+    )
+    if not created_c:
+        return pd.DataFrame()
 
-if zone_sel:
-    mask &= df["pickup_hub_zone"].isin(zone_sel)
-if city_sel:
-    mask &= df["pickup_hub_city"].isin(city_sel)
-if seller_sel:
-    mask &= df["seller_type"].isin(seller_sel)
-if payment_sel != "All":
-    mask &= df["payment_type"] == payment_sel
+    out = df.copy()
+    out["Created"] = out[created_c]
+    out["D0 PH-in"] = out[d0_c] if d0_c else 0
+    out["D1 PH-in"] = out[d1_c] if d1_c else 0
+    out["D2+ PH-in"] = out[d2_c] if d2_c else 0
+    if pend_c:
+        out["Pending PH-in"] = out[pend_c]
+    elif picked_c:
+        out["Pending PH-in"] = out[created_c] - out[picked_c]
+    else:
+        out["Pending PH-in"] = 0
+    return out
 
-fdf = df[mask]
 
-st.sidebar.markdown(f"**Rows:** {len(fdf):,}")
+def agg_table(df: pd.DataFrame, keys: list[str], as_pct: bool) -> pd.DataFrame:
+    measures = ["Created", "Pending PH-in", "D0 PH-in", "D1 PH-in", "D2+ PH-in"]
+    t = df.groupby(keys, as_index=False)[measures].sum()
+    if as_pct:
+        t["D0 %"] = safe_pct(t["D0 PH-in"], t["Created"])
+        t["D1 %"] = safe_pct(t["D1 PH-in"], t["Created"])
+        t["D2+ %"] = safe_pct(t["D2+ PH-in"], t["Created"])
+        t["Pending %"] = safe_pct(t["Pending PH-in"], t["Created"])
+        show = keys + ["D0 %", "D1 %", "D2+ %", "Pending %", "Created"]
+        return t[show].sort_values("Created", ascending=False)
+    return t.sort_values("Created", ascending=False)
 
-# ── KPI Row ──────────────────────────────────────────────────────
-st.title("📦 Pickup Hub Dashboard")
 
-total_created = fdf["fm_created"].sum()
-total_picked  = fdf["fm_picked"].sum()
-total_unpicked = fdf["fm_created_unpicked"].sum()
-pick_rate = (total_picked / total_created * 100) if total_created > 0 else 0
-zero_rto  = fdf["zero_attempt_rto_num"].sum()
-ph_in     = fdf["ph_in_volume"].sum()
+# ── Data ──────────────────────────────────────────────────────────
+with st.expander("Data source", expanded=False):
+    st.caption(
+        "FDP: `QUERY_FM_PU_E2E.txt` (NL query2 PU). State grain: `QUERY_PU_QUERY2_NL.sql`. Logic: `QUERY_PU_QUERY2_LOGIC.md`."
+    )
+    csv_path = st.text_input("FDP CSV path", value=DEFAULT_CSV)
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("FM Created",   f"{total_created:,.0f}")
-c2.metric("FM Picked",    f"{total_picked:,.0f}")
-c3.metric("Unpicked",     f"{total_unpicked:,.0f}")
-c4.metric("Pick-Thru %",  f"{pick_rate:.1f}%")
-c5.metric("Zero-Att RTO", f"{zero_rto:,.0f}")
-c6.metric("PH-In Volume", f"{ph_in:,.0f}")
+raw = load_data(csv_path)
+if raw.empty or raw["reporting_date"].isna().all():
+    st.error("No data — check CSV path.")
+    st.stop()
+
+available_dates = sorted(raw["reporting_date"].dropna().dt.date.unique())
+date_set = set(available_dates)
+min_d, max_d = available_dates[0], available_dates[-1]
+
+if "sel_date" not in st.session_state:
+    st.session_state.sel_date = max_d
+if "cal_year" not in st.session_state:
+    st.session_state.cal_year = st.session_state.sel_date.year
+if "cal_month" not in st.session_state:
+    st.session_state.cal_month = st.session_state.sel_date.month
+
+st.title("FM — client & hub pickup")
+
+# ── Filters (main page) ─────────────────────────────────────────
+clients = sorted(raw["seller_type"].dropna().unique())
+f1, f2, f3 = st.columns([3, 2, 1])
+with f1:
+    sel_clients = st.multiselect(
+        "Client(s)",
+        clients,
+        default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
+    )
+with f2:
+    picked = st.date_input(
+        "Date",
+        value=st.session_state.sel_date,
+        min_value=min_d,
+        max_value=max_d,
+        format="DD/MM/YYYY",
+    )
+    if picked != st.session_state.sel_date:
+        st.session_state.sel_date = picked
+        st.session_state.cal_year = picked.year
+        st.session_state.cal_month = picked.month
+with f3:
+    show_pct = st.toggle("Show %", value=False)
+
+sel_date = st.session_state.sel_date
+daily_map = daily_created_totals(raw, sel_clients)
+
+# ── Calendar ──────────────────────────────────────────────────────
+nav_l, nav_m, nav_r = st.columns([1, 6, 1])
+with nav_l:
+    if st.button("◀ Prev month", use_container_width=True):
+        m, y = st.session_state.cal_month, st.session_state.cal_year
+        m -= 1
+        if m < 1:
+            m, y = 12, y - 1
+        st.session_state.cal_month, st.session_state.cal_year = m, y
+        st.rerun()
+with nav_r:
+    if st.button("Next month ▶", use_container_width=True):
+        m, y = st.session_state.cal_month, st.session_state.cal_year
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+        st.session_state.cal_month, st.session_state.cal_year = m, y
+        st.rerun()
+
+with nav_m:
+    render_month_calendar(
+        daily_map,
+        st.session_state.cal_year,
+        st.session_state.cal_month,
+        sel_date,
+        date_set,
+    )
 
 st.divider()
 
-# ── View Tabs ────────────────────────────────────────────────────
-tabs = st.tabs(["🏙️ Hub Summary", "🗺️ Zone & City", "👤 Seller Type", "💳 Payment Split", "📋 Raw Data"])
+day = raw[raw["reporting_date"].dt.date == sel_date]
+if sel_clients:
+    day = day[day["seller_type"].isin(sel_clients)]
 
-# ── helper ──────────────────────────────────────────────────────
-def pct_color(val):
-    if pd.isna(val): return ""
-    if val >= 80: return "background-color:#1a6b3a;color:white"
-    if val >= 60: return "background-color:#856404;color:white"
-    return "background-color:#842029;color:white"
+enriched = build_metrics(day)
+if enriched.empty:
+    st.warning("No rows for this date / client filter.")
+    st.stop()
 
-def style_rates(df_in, rate_cols):
-    def apply(val, col):
-        if col in rate_cols: return pct_color(val)
-        return ""
-    return df_in.style.apply(
-        lambda col: [apply(v, col.name) for v in col], axis=0
-    ).format({c: "{:.1f}%" for c in rate_cols if c in df_in.columns},
-             {c: "{:,.0f}" for c in df_in.columns if c not in rate_cols and df_in[c].dtype in [float, int]})
+st.caption(
+    f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
+    f"**Clients:** {', '.join(sel_clients)} · "
+    "D0/D1/D2+ = query2 PU lag (final PH-in vs create on NL L1) · D0 % = d0_shipments / created"
+)
 
-def show_table(agg_df, rate_cols=None, key=None):
-    rate_cols = rate_cols or set()
-    fmt = {}
-    for c in agg_df.columns:
-        if c in rate_cols:
-            fmt[c] = "{:.1f}%"
-        elif agg_df[c].dtype in [float, np.float64]:
-            fmt[c] = "{:,.1f}"
-        elif agg_df[c].dtype in [int, np.int64]:
-            fmt[c] = "{:,}"
-    st.dataframe(agg_df.style.format(fmt), width='stretch', hide_index=True, height=500)
+st.subheader("By client")
+client_tbl = agg_table(enriched, ["seller_type"], show_pct)
+st.dataframe(client_tbl.rename(columns={"seller_type": "Client"}), use_container_width=True, hide_index=True)
 
-# ── Tab 1: Hub Summary ───────────────────────────────────────────
-with tabs[0]:
-    st.subheader("Hub-Level Summary")
-    col_sort, col_dir = st.columns([3, 1])
-    sort_by = col_sort.selectbox("Sort by", ["fm_created", "fm_picked", "pick_thru_rate", "zero_attempt_rto_num", "ph_in_volume"], key="hub_sort")
-    asc = col_dir.radio("Order", ["Desc", "Asc"], key="hub_dir", horizontal=True) == "Asc"
-
-    hub_agg = fdf.groupby(["pickup_hub_name", "pickup_hub_city", "pickup_hub_zone"], as_index=False).agg(
-        fm_created=("fm_created", "sum"),
-        fm_picked=("fm_picked", "sum"),
-        fm_unpicked=("fm_created_unpicked", "sum"),
-        ph_in_volume=("ph_in_volume", "sum"),
-        zero_attempt_rto_num=("zero_attempt_rto_num", "sum"),
-        cron_pending_pickup=("cron_pending_pickup", "sum"),
-        d0_attempt=("d0_attempt", "sum"),
-        d1_attempt=("d1_attempt", "sum"),
-    )
-    hub_agg["pick_thru_rate"] = np.where(
-        hub_agg["fm_created"] > 0,
-        (hub_agg["fm_picked"] / hub_agg["fm_created"] * 100).round(1), 0
-    )
-    hub_agg = hub_agg.sort_values(sort_by, ascending=asc).reset_index(drop=True)
-
-    st.caption(f"{len(hub_agg):,} hubs")
-    show_table(hub_agg, rate_cols={"pick_thru_rate"}, key="hub_tbl")
-
-# ── Tab 2: Zone & City ───────────────────────────────────────────
-with tabs[1]:
-    view = st.radio("Group by", ["Zone", "City"], horizontal=True, key="geo_view")
-    grp_col = "pickup_hub_zone" if view == "Zone" else "pickup_hub_city"
-
-    geo_agg = fdf.groupby(grp_col, as_index=False).agg(
-        Hubs=("pickup_hub_name", "nunique"),
-        FM_Created=("fm_created", "sum"),
-        FM_Picked=("fm_picked", "sum"),
-        Unpicked=("fm_created_unpicked", "sum"),
-        PH_In=("ph_in_volume", "sum"),
-        Zero_RTO=("zero_attempt_rto_num", "sum"),
-        Cron_Pending=("cron_pending_pickup", "sum"),
-        D0_Attempt=("d0_attempt", "sum"),
-        D1_Attempt=("d1_attempt", "sum"),
-    )
-    geo_agg["Pick_Thru_%"] = np.where(
-        geo_agg["FM_Created"] > 0,
-        (geo_agg["FM_Picked"] / geo_agg["FM_Created"] * 100).round(1), 0
-    )
-    geo_agg = geo_agg.sort_values("FM_Created", ascending=False).reset_index(drop=True)
-    show_table(geo_agg, rate_cols={"Pick_Thru_%"}, key="geo_tbl")
-
-# ── Tab 3: Seller Type ───────────────────────────────────────────
-with tabs[2]:
-    st.subheader("Seller Type Breakdown")
-    col_a, col_b = st.columns([2, 1])
-    min_created = col_a.slider("Min FM Created", 0, int(fdf["fm_created"].sum() // 100), 0, key="seller_min")
-
-    seller_agg = fdf.groupby("seller_type", as_index=False).agg(
-        FM_Created=("fm_created", "sum"),
-        FM_Picked=("fm_picked", "sum"),
-        Unpicked=("fm_created_unpicked", "sum"),
-        Zero_RTO=("zero_attempt_rto_num", "sum"),
-        D0_Attempt=("d0_attempt", "sum"),
-        D1_Attempt=("d1_attempt", "sum"),
-        Hubs=("pickup_hub_name", "nunique"),
-    )
-    seller_agg["Pick_Thru_%"] = np.where(
-        seller_agg["FM_Created"] > 0,
-        (seller_agg["FM_Picked"] / seller_agg["FM_Created"] * 100).round(1), 0
-    )
-    seller_agg = seller_agg[seller_agg["FM_Created"] >= min_created]
-    seller_agg = seller_agg.sort_values("FM_Created", ascending=False).reset_index(drop=True)
-    st.caption(f"{len(seller_agg):,} seller types")
-    show_table(seller_agg, rate_cols={"Pick_Thru_%"}, key="seller_tbl")
-
-# ── Tab 4: Payment Split ─────────────────────────────────────────
-with tabs[3]:
-    st.subheader("Payment Type Breakdown")
-    pay_grp = st.radio("Group by", ["payment_type", "pickup_hub_zone", "seller_type"], horizontal=True, key="pay_grp")
-
-    pay_agg = fdf.groupby(["payment_type", pay_grp] if pay_grp != "payment_type" else ["payment_type"], as_index=False).agg(
-        FM_Created=("fm_created", "sum"),
-        FM_Picked=("fm_picked", "sum"),
-        Unpicked=("fm_created_unpicked", "sum"),
-        Zero_RTO=("zero_attempt_rto_num", "sum"),
-        D0_Attempt=("d0_attempt", "sum"),
-    )
-    pay_agg["Pick_Thru_%"] = np.where(
-        pay_agg["FM_Created"] > 0,
-        (pay_agg["FM_Picked"] / pay_agg["FM_Created"] * 100).round(1), 0
-    )
-    pay_agg = pay_agg.sort_values(["payment_type", "FM_Created"], ascending=[True, False]).reset_index(drop=True)
-    show_table(pay_agg, rate_cols={"Pick_Thru_%"}, key="pay_tbl")
-
-# ── Tab 5: Raw Data ──────────────────────────────────────────────
-with tabs[4]:
-    st.subheader("Raw Filtered Data")
-    cols_to_show = st.multiselect(
-        "Columns",
-        options=list(fdf.columns),
-        default=["reporting_date", "pickup_hub_name", "pickup_hub_city", "pickup_hub_zone",
-                 "seller_type", "payment_type", "fm_created", "fm_picked",
-                 "pick_thru_rate", "zero_attempt_rto_num"],
-        key="raw_cols"
-    )
-    if cols_to_show:
-        st.caption(f"{len(fdf):,} rows")
-        st.dataframe(fdf[cols_to_show].reset_index(drop=True), width='stretch', hide_index=True, height=500)
-    else:
-        st.info("Select at least one column.")
+st.subheader("By hub")
+hub_keys = [k for k in ("pickup_hub_name", "pickup_hub_city", "pickup_hub_zone", "seller_type") if k in enriched.columns]
+hub_tbl = agg_table(enriched, hub_keys, show_pct)
+st.dataframe(
+    hub_tbl.rename(columns={
+        "pickup_hub_name": "Hub",
+        "pickup_hub_city": "City",
+        "pickup_hub_zone": "Zone",
+        "seller_type": "Client",
+    }),
+    use_container_width=True,
+    hide_index=True,
+)
