@@ -1,5 +1,7 @@
 import calendar
+import os
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -12,8 +14,32 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Export from QUERY_FM_PU_E2E.txt on FDP (e2e D0 logic). Old ext L1 dashboard CSV understates D0 ~20%.
-DEFAULT_CSV = r"C:\Users\kaushik.kumar2\Downloads\6e556544069d681fb4869517a0249d65.csv"
+APP_DIR = Path(__file__).resolve().parent
+BUNDLED_CSV = APP_DIR / "8a296c1ba2cacc19409c6fb7a2d79640.csv"
+
+
+def default_csv_path() -> str:
+    env = os.environ.get("FM_DASHBOARD_CSV", "").strip()
+    if env and Path(env).is_file():
+        return env
+    if BUNDLED_CSV.is_file():
+        return str(BUNDLED_CSV)
+    return ""
+
+
+def resolve_csv_path(user_path: str) -> Path | None:
+    if user_path.strip():
+        p = Path(user_path.strip())
+        if p.is_file():
+            return p
+    env = os.environ.get("FM_DASHBOARD_CSV", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_file():
+            return p
+    if BUNDLED_CSV.is_file():
+        return BUNDLED_CSV
+    return None
 
 # Prefer e2e / query2 PU columns (final_ph_in_date_key logic), then ext L1 dashboard export
 COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume")
@@ -31,9 +57,7 @@ def pick_col(df, *candidates):
     return None
 
 
-@st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str) -> pd.DataFrame:
-    df = pd.read_csv(csv_path, dtype=str)
+def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
     if "merchant_code" in df.columns and "seller_type" not in df.columns:
         df["seller_type"] = df["merchant_code"]
     df["reporting_date"] = pd.to_datetime(df["reporting_date"], errors="coerce")
@@ -51,6 +75,14 @@ def load_data(csv_path: str) -> pd.DataFrame:
         if c in df.columns:
             df[c] = df[c].fillna("Unknown")
     return df
+
+
+@st.cache_data(show_spinner="Loading FDP export…")
+def load_data(csv_path: str) -> pd.DataFrame:
+    path = Path(csv_path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return normalize_export(pd.read_csv(path, dtype=str))
 
 
 def safe_pct(num, den):
@@ -144,13 +176,30 @@ def agg_table(df: pd.DataFrame, keys: list[str], as_pct: bool) -> pd.DataFrame:
 # ── Data ──────────────────────────────────────────────────────────
 with st.expander("Data source", expanded=False):
     st.caption(
-        "FDP: `QUERY_FM_PU_E2E.txt` (NL query2 PU). State grain: `QUERY_PU_QUERY2_NL.sql`. Logic: `QUERY_PU_QUERY2_LOGIC.md`."
+        "FDP: `QUERY_FM_PU_E2E.txt` (NL query2 PU). Cloud uses bundled CSV or upload; override with `FM_DASHBOARD_CSV`."
     )
-    csv_path = st.text_input("FDP CSV path", value=DEFAULT_CSV)
+    csv_path_input = st.text_input("CSV path (local / server)", value=default_csv_path())
+    upload = st.file_uploader("Or upload FDP export (.csv)", type=["csv"])
 
-raw = load_data(csv_path)
+if upload is not None:
+    load_data.clear()
+    raw = normalize_export(pd.read_csv(upload, dtype=str))
+else:
+    resolved = resolve_csv_path(csv_path_input)
+    if resolved is None:
+        st.error(
+            "No CSV found. On Streamlit Cloud use the bundled file in the repo, upload a file above, "
+            "or set secret/env `FM_DASHBOARD_CSV`."
+        )
+        st.stop()
+    try:
+        raw = load_data(str(resolved))
+    except FileNotFoundError:
+        st.error(f"File not found: {resolved}")
+        st.stop()
+
 if raw.empty or raw["reporting_date"].isna().all():
-    st.error("No data — check CSV path.")
+    st.error("No data — check CSV columns (need reporting_date, seller_type, metrics).")
     st.stop()
 
 available_dates = sorted(raw["reporting_date"].dropna().dt.date.unique())
