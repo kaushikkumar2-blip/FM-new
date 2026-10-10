@@ -49,6 +49,16 @@ D2_COLS = ("d2_shipments", "cal_d2_plus_picked", "fm_d1_plus_picked", "created_d
 PENDING_COLS = ("pending_shipments", "cal_no_phin", "fm_created_unpicked", "ph_in_unpicked", "created_bd_no_phin")
 PICKED_COLS = ("total_picked", "fm_picked", "ph_in_picked")
 
+# Columns kept as text; everything else in the export is coerced to numeric for sums.
+TEXT_DIMS = frozenset({
+    "seller_type",
+    "merchant_code",
+    "payment_type",
+    "pickup_hub_name",
+    "pickup_hub_city",
+    "pickup_hub_zone",
+})
+
 
 def pick_col(df, *candidates):
     for c in candidates:
@@ -57,22 +67,18 @@ def pick_col(df, *candidates):
     return None
 
 
+def as_numeric(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").fillna(0)
+
+
 def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
     if "merchant_code" in df.columns and "seller_type" not in df.columns:
         df["seller_type"] = df["merchant_code"]
     df["reporting_date"] = pd.to_datetime(df["reporting_date"], errors="coerce")
-    num_like = [
-        "total_shipments", "total_picked", "d0_shipments", "d1_shipments", "d2_shipments", "pending_shipments",
-        "created_volume", "cal_created_volume",
-        "cal_d0_picked", "cal_d1_picked", "cal_d2_plus_picked", "cal_no_phin",
-        "created_bd_d0_picked", "created_bd_d1_picked", "created_bd_d2_plus_picked", "created_bd_no_phin",
-        "created_d0_attempt", "created_d1_attempt", "created_d1_plus_attempt",
-        "fm_created", "fm_picked", "fm_created_unpicked", "fm_d0_picked", "fm_d1_picked", "fm_d1_plus_picked",
-        "ph_in_unpicked", "ph_in_picked", "d0_attempt", "d1_attempt", "d1_plus_attempt",
-    ]
-    for c in num_like:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    for c in df.columns:
+        if c in TEXT_DIMS or c == "reporting_date":
+            continue
+        df[c] = as_numeric(df[c])
     for c in ("pickup_hub_name", "pickup_hub_city", "pickup_hub_zone"):
         if c in df.columns:
             df[c] = df[c].fillna("Unknown")
@@ -80,7 +86,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str) -> pd.DataFrame:
+def load_data(csv_path: str, _schema_rev: int = 2) -> pd.DataFrame:
     path = Path(csv_path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -149,14 +155,15 @@ def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     out = df.copy()
-    out["Created"] = out[created_c]
-    out["D0 PH-in"] = out[d0_c] if d0_c else 0
-    out["D1 PH-in"] = out[d1_c] if d1_c else 0
-    out["D2+ PH-in"] = out[d2_c] if d2_c else 0
+    created = as_numeric(out[created_c])
+    out["Created"] = created
+    out["D0 PH-in"] = as_numeric(out[d0_c]) if d0_c else 0
+    out["D1 PH-in"] = as_numeric(out[d1_c]) if d1_c else 0
+    out["D2+ PH-in"] = as_numeric(out[d2_c]) if d2_c else 0
     if pend_c:
-        out["Pending PH-in"] = out[pend_c]
+        out["Pending PH-in"] = as_numeric(out[pend_c])
     elif picked_c:
-        out["Pending PH-in"] = out[created_c] - out[picked_c]
+        out["Pending PH-in"] = created - as_numeric(out[picked_c])
     else:
         out["Pending PH-in"] = 0
     return out
@@ -164,7 +171,7 @@ def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 def agg_table(df: pd.DataFrame, keys: list[str], as_pct: bool) -> pd.DataFrame:
     measures = ["Created", "Pending PH-in", "D0 PH-in", "D1 PH-in", "D2+ PH-in"]
-    t = df.groupby(keys, as_index=False)[measures].sum()
+    t = df.groupby(keys, as_index=False)[measures].sum(numeric_only=True)
     if as_pct:
         t["D0 %"] = safe_pct(t["D0 PH-in"], t["Created"])
         t["D1 %"] = safe_pct(t["D1 PH-in"], t["Created"])
