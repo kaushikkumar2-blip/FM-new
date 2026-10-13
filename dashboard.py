@@ -1,6 +1,4 @@
-import calendar
 import os
-from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -97,51 +95,6 @@ def safe_pct(num, den):
     return np.where(den > 0, (num / den * 100).round(1), 0.0)
 
 
-def daily_created_totals(df: pd.DataFrame, clients: list[str]) -> dict[date, float]:
-    created_c = pick_col(df, *COHORT_DENOM)
-    if not created_c:
-        return {}
-    sub = df[df["seller_type"].isin(clients)] if clients else df
-    g = sub.groupby(sub["reporting_date"].dt.date)[created_c].sum()
-    return {k: float(v) for k, v in g.items()}
-
-
-def render_month_calendar(
-    daily_map: dict[date, float],
-    year: int,
-    month: int,
-    selected: date,
-    in_range: set[date],
-):
-    st.markdown(f"**{date(year, month, 1).strftime('%B %Y')}** — click a day (numbers = created for selected clients)")
-    header = st.columns(7)
-    for i, label in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
-        header[i].markdown(f"**{label}**")
-
-    cal = calendar.Calendar(firstweekday=0)
-    for week in cal.monthdayscalendar(year, month):
-        cols = st.columns(7)
-        for i, day_num in enumerate(week):
-            if day_num == 0:
-                cols[i].write("")
-                continue
-            d = date(year, month, day_num)
-            vol = int(daily_map.get(d, 0))
-            has_data = d in in_range
-            label = f"{day_num}\n{vol:,}" if vol else str(day_num)
-            btn_type = "primary" if d == selected else "secondary"
-            disabled = not has_data
-            if cols[i].button(
-                label,
-                key=f"cal_{year}_{month}_{day_num}",
-                use_container_width=True,
-                type=btn_type,
-                disabled=disabled,
-            ):
-                st.session_state.sel_date = d
-                st.rerun()
-
-
 def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
     created_c = pick_col(df, *COHORT_DENOM)
     d0_c, d1_c, d2_c, pend_c, picked_c = (
@@ -212,15 +165,7 @@ if raw.empty or raw["reporting_date"].isna().all():
     st.stop()
 
 available_dates = sorted(raw["reporting_date"].dropna().dt.date.unique())
-date_set = set(available_dates)
 min_d, max_d = available_dates[0], available_dates[-1]
-
-if "sel_date" not in st.session_state:
-    st.session_state.sel_date = max_d
-if "cal_year" not in st.session_state:
-    st.session_state.cal_year = st.session_state.sel_date.year
-if "cal_month" not in st.session_state:
-    st.session_state.cal_month = st.session_state.sel_date.month
 
 st.title("FM — client & hub pickup")
 
