@@ -179,52 +179,15 @@ with f1:
         default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
     )
 with f2:
-    picked = st.date_input(
+    sel_date = st.date_input(
         "Date",
-        value=st.session_state.sel_date,
+        value=max_d,
         min_value=min_d,
         max_value=max_d,
         format="DD/MM/YYYY",
     )
-    if picked != st.session_state.sel_date:
-        st.session_state.sel_date = picked
-        st.session_state.cal_year = picked.year
-        st.session_state.cal_month = picked.month
 with f3:
     show_pct = st.toggle("Show %", value=False)
-
-sel_date = st.session_state.sel_date
-daily_map = daily_created_totals(raw, sel_clients)
-
-# ── Calendar ──────────────────────────────────────────────────────
-nav_l, nav_m, nav_r = st.columns([1, 6, 1])
-with nav_l:
-    if st.button("◀ Prev month", use_container_width=True):
-        m, y = st.session_state.cal_month, st.session_state.cal_year
-        m -= 1
-        if m < 1:
-            m, y = 12, y - 1
-        st.session_state.cal_month, st.session_state.cal_year = m, y
-        st.rerun()
-with nav_r:
-    if st.button("Next month ▶", use_container_width=True):
-        m, y = st.session_state.cal_month, st.session_state.cal_year
-        m += 1
-        if m > 12:
-            m, y = 1, y + 1
-        st.session_state.cal_month, st.session_state.cal_year = m, y
-        st.rerun()
-
-with nav_m:
-    render_month_calendar(
-        daily_map,
-        st.session_state.cal_year,
-        st.session_state.cal_month,
-        sel_date,
-        date_set,
-    )
-
-st.divider()
 
 day = raw[raw["reporting_date"].dt.date == sel_date]
 if sel_clients:
