@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
-SCHEMA_REV = 11
+SCHEMA_REV = 12
 BUNDLED_CSV_NAMES = (
     "fm_nl_bundled_export.csv",
     "af502da717f8f1c350e1c4a91c56afaf.csv",
@@ -28,6 +28,7 @@ D0_COLS = ("d0_shipments", "cal_d0_picked")
 D1_COLS = ("d1_shipments", "cal_d1_picked")
 D2_COLS = ("d2_shipments", "cal_d2_plus_picked")
 PENDING_COLS = ("pending_shipments", "cal_no_phin")
+MH_NO_PH_COLS = ("cal_mhin_no_phin",)
 PICKED_COLS = ("total_picked",)
 
 NP_AGE_MAP = (
@@ -114,11 +115,12 @@ def safe_pct(num, den):
 
 def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
     created_c = pick_col(df, *COHORT_DENOM)
-    d0_c, d1_c, d2_c, pend_c, picked_c = (
+    d0_c, d1_c, d2_c, pend_c, mh_no_ph_c, picked_c = (
         pick_col(df, *D0_COLS),
         pick_col(df, *D1_COLS),
         pick_col(df, *D2_COLS),
         pick_col(df, *PENDING_COLS),
+        pick_col(df, *MH_NO_PH_COLS),
         pick_col(df, *PICKED_COLS),
     )
     if not created_c:
@@ -136,6 +138,8 @@ def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
         out["Pending"] = created - as_numeric(out[picked_c])
     else:
         out["Pending"] = 0
+    if mh_no_ph_c:
+        out["MH no PH"] = as_numeric(out[mh_no_ph_c])
     for src, label in NP_AGE_MAP:
         if src in out.columns:
             out[label] = as_numeric(out[src])
@@ -143,7 +147,10 @@ def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def measure_columns(df: pd.DataFrame) -> list[str]:
-    base = ["Created", "Pending", "D0", "D1", "D2+"]
+    base = ["Created", "Pending"]
+    if "MH no PH" in df.columns:
+        base.append("MH no PH")
+    base.extend(["D0", "D1", "D2+"])
     age = [label for _, label in NP_AGE_MAP if label in df.columns]
     return base + age
 
@@ -166,7 +173,11 @@ def agg_table(
         t["D1 %"] = safe_pct(t["D1"], t["Created"])
         t["D2+ %"] = safe_pct(t["D2+"], t["Created"])
         t["Pending %"] = safe_pct(t["Pending"], t["Created"])
-        show = keys + ["D0 %", "D1 %", "D2+ %", "Pending %", "Created"]
+        pct_cols = ["D0 %", "D1 %", "D2+ %", "Pending %"]
+        if "MH no PH" in t.columns:
+            t["MH no PH %"] = safe_pct(t["MH no PH"], t["Created"])
+            pct_cols.append("MH no PH %")
+        show = keys + pct_cols + ["Created"]
         t = t[show]
     if sort_by_period:
         sort_cols = [keys[0]]
@@ -193,7 +204,7 @@ def load_raw_interactive() -> pd.DataFrame:
         st.caption(
             "NL externalisation FM pickup export (3-month create cohort). "
             "D0 % = cal_d0_picked / cal_created_volume (PH-in on create day or earlier). "
-            "NP age buckets = not-picked ageing as of export run. Bundled CSV or `FM_DASHBOARD_CSV`."
+            "MH no PH = cal_mhin_no_phin. NP age = true not-picked (no PH-in, no MH-in). Bundled CSV or `FM_DASHBOARD_CSV`."
         )
         bundled = find_bundled_csv()
         if bundled:

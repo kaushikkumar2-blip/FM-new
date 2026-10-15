@@ -68,7 +68,7 @@ enriched = enriched.copy()
 enriched["Period"] = period_label(enriched["reporting_date"], grain)
 metric_caption = (
     f"**{client}** · {start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')} · "
-    f"**{grain}** · D0 % = cal_d0 / created (PH-in on create day or earlier)"
+    f"**{grain}** · D0 % = cal_d0 / created · **MH no PH %** = MH-in without PH-in / created"
 )
 
 st.subheader("3. Client total")
