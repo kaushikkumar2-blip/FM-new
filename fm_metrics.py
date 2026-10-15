@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
-SCHEMA_REV = 12
+SCHEMA_REV = 13
 BUNDLED_CSV_NAMES = (
     "fm_nl_bundled_export.csv",
     "af502da717f8f1c350e1c4a91c56afaf.csv",
@@ -257,12 +257,13 @@ def render_kpi_row(enriched: pd.DataFrame) -> None:
     pend = float(enriched["Pending"].sum())
     has_mh = "MH no PH" in enriched.columns
     mh = float(enriched["MH no PH"].sum()) if has_mh else 0.0
-    n = 6 if has_mh else 5
-    cols = st.columns(n)
-    cols[0].metric("Created", f"{int(created):,}")
-    cols[1].metric("D0 %", f"{d0 / created * 100:.1f}%")
-    cols[2].metric("D1 %", f"{d1 / created * 100:.1f}%")
-    cols[3].metric("D2+ %", f"{d2 / created * 100:.1f}%")
-    cols[4].metric("Pending %", f"{pend / created * 100:.1f}%")
-    if has_mh:
-        cols[5].metric("MH no PH %", f"{mh / created * 100:.1f}%")
+    weights = [1, 1, 1, 1, 1, 1] if has_mh else [1, 1, 1, 1, 1]
+    with st.container(border=True):
+        cols = st.columns(weights, gap="medium")
+        cols[0].metric("Created", f"{int(created):,}")
+        cols[1].metric("D0 %", f"{d0 / created * 100:.1f}%")
+        cols[2].metric("D1 %", f"{d1 / created * 100:.1f}%")
+        cols[3].metric("D2+ %", f"{d2 / created * 100:.1f}%")
+        cols[4].metric("Pending %", f"{pend / created * 100:.1f}%")
+        if has_mh:
+            cols[5].metric("MH no PH %", f"{mh / created * 100:.1f}%")

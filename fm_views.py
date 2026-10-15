@@ -6,18 +6,10 @@ from fm_metrics import agg_table, build_metrics, date_bounds, hub_columns, perio
 def render_daily_page(raw) -> None:
     min_d, max_d = date_bounds(raw)
     clients = sorted(raw["seller_type"].dropna().unique())
-    f1, f2, f3 = st.columns([3, 2, 1])
-    with f1:
+    top1, top2, top3 = st.columns([4, 2, 1], vertical_alignment="bottom")
+    with top1:
         all_clients = st.checkbox("All clients", value=False)
-        if all_clients:
-            sel_clients = list(clients)
-        else:
-            sel_clients = st.multiselect(
-                "Client(s)",
-                clients,
-                default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
-            )
-    with f2:
+    with top2:
         sel_date = st.date_input(
             "Date",
             value=max_d,
@@ -25,8 +17,17 @@ def render_daily_page(raw) -> None:
             max_value=max_d,
             format="DD/MM/YYYY",
         )
-    with f3:
+    with top3:
         show_pct = st.toggle("Show %", value=False)
+
+    if all_clients:
+        sel_clients = list(clients)
+    else:
+        sel_clients = st.multiselect(
+            "Client(s)",
+            clients,
+            default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
+        )
 
     day = raw[raw["reporting_date"].dt.date == sel_date]
     if sel_clients:

@@ -16,6 +16,15 @@ st.markdown(
         section[data-testid="stSidebar"] { display: none; }
         button[kind="headerNoPadding"] { display: none; }
         [data-testid="collapsedControl"] { display: none; }
+        div[data-testid="stMetric"] {
+            text-align: center;
+        }
+        div[data-testid="stMetric"] label {
+            justify-content: center;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 1.75rem;
+        }
     </style>
     """,
     unsafe_allow_html=True,
