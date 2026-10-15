@@ -1,6 +1,6 @@
 import streamlit as st
 
-from fm_metrics import agg_table, build_metrics, date_bounds, load_raw_interactive, period_label
+from fm_metrics import agg_table, build_metrics, date_bounds, hub_columns, load_raw_interactive, period_label
 
 st.title("FM — performance trends")
 
@@ -66,11 +66,51 @@ if enriched.empty:
 
 enriched = enriched.copy()
 enriched["Period"] = period_label(enriched["reporting_date"], grain)
-tbl = agg_table(enriched, ["Period"], show_pct, sort_by_period=True)
-
-st.subheader("3. Performance")
-st.caption(
+metric_caption = (
     f"**{client}** · {start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')} · "
-    f"**{grain}** view · D0 = same-day PH-in"
+    f"**{grain}** · D0 % = cal_d0 / created (PH-in on create day or earlier)"
 )
+
+st.subheader("3. Client total")
+st.caption(metric_caption)
+tbl = agg_table(enriched, ["Period"], show_pct, sort_by_period=True)
 st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+hubs = hub_columns(enriched)
+if not hubs:
+    st.info("No hub columns in this export.")
+    st.stop()
+
+st.divider()
+st.subheader("4. Hub breakdown")
+hub_view = st.radio(
+    "Hub view",
+    options=["By hub over time", "Client total only"],
+    horizontal=True,
+    index=0,
+)
+if hub_view == "Client total only":
+    st.stop()
+
+hub_labels = enriched["pickup_hub_name"].fillna("Unknown") + " · " + enriched["pickup_hub_city"].fillna("")
+hub_options = sorted(hub_labels.unique())
+picked_hubs = st.multiselect(
+    "Hubs (empty = all)",
+    options=hub_options,
+    default=[],
+)
+hub_df = enriched
+if picked_hubs:
+    hub_df = enriched[hub_labels.isin(picked_hubs)]
+
+hub_keys = ["Period"] + hubs
+hub_tbl = agg_table(hub_df, hub_keys, show_pct, sort_by_period=True)
+st.dataframe(
+    hub_tbl.rename(columns={
+        "pickup_hub_name": "Hub",
+        "pickup_hub_city": "City",
+        "pickup_hub_zone": "Zone",
+    }),
+    use_container_width=True,
+    hide_index=True,
+)

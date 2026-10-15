@@ -16,6 +16,14 @@ D2_COLS = ("d2_shipments", "cal_d2_plus_picked")
 PENDING_COLS = ("pending_shipments", "cal_no_phin")
 PICKED_COLS = ("total_picked",)
 
+NP_AGE_MAP = (
+    ("np_age_1", "NP ≤1d"),
+    ("np_age_2", "NP 2d"),
+    ("np_age_3", "NP 3d"),
+    ("np_age_4", "NP 4d"),
+    ("np_age_5_plus", "NP 5d+"),
+)
+
 TEXT_DIMS = frozenset({
     "seller_type",
     "merchant_code",
@@ -76,7 +84,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str, _schema_rev: int = 8) -> pd.DataFrame:
+def load_data(csv_path: str, _schema_rev: int = 9) -> pd.DataFrame:
     path = Path(csv_path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -111,7 +119,20 @@ def build_metrics(df: pd.DataFrame) -> pd.DataFrame:
         out["Pending"] = created - as_numeric(out[picked_c])
     else:
         out["Pending"] = 0
+    for src, label in NP_AGE_MAP:
+        if src in out.columns:
+            out[label] = as_numeric(out[src])
     return out
+
+
+def measure_columns(df: pd.DataFrame) -> list[str]:
+    base = ["Created", "Pending", "D0", "D1", "D2+"]
+    age = [label for _, label in NP_AGE_MAP if label in df.columns]
+    return base + age
+
+
+def hub_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in ("pickup_hub_name", "pickup_hub_city", "pickup_hub_zone") if c in df.columns]
 
 
 def agg_table(
@@ -121,7 +142,7 @@ def agg_table(
     *,
     sort_by_period: bool = False,
 ) -> pd.DataFrame:
-    measures = ["Created", "Pending", "D0", "D1", "D2+"]
+    measures = [m for m in measure_columns(df) if m in df.columns]
     t = df.groupby(keys, as_index=False)[measures].sum(numeric_only=True)
     if as_pct:
         t["D0 %"] = safe_pct(t["D0"], t["Created"])
@@ -131,6 +152,10 @@ def agg_table(
         show = keys + ["D0 %", "D1 %", "D2+ %", "Pending %", "Created"]
         t = t[show]
     if sort_by_period:
+        sort_cols = [keys[0]]
+        if len(keys) > 1 and "Created" in t.columns:
+            sort_cols.append("Created")
+            return t.sort_values(sort_cols, ascending=[True, False])
         return t.sort_values(keys[0], ascending=True)
     return t.sort_values("Created", ascending=False)
 
@@ -149,7 +174,9 @@ def period_label(series: pd.Series, grain: str) -> pd.Series:
 def load_raw_interactive() -> pd.DataFrame:
     with st.expander("Data source", expanded=False):
         st.caption(
-            "FDP export — D0 when PH-in date = create date. Bundled CSV, upload, or `FM_DASHBOARD_CSV`."
+            "NL externalisation FM pickup export (3-month create cohort). "
+            "D0 % = cal_d0_picked / cal_created_volume (PH-in on create day or earlier). "
+            "NP age buckets = not-picked ageing as of export run. Bundled CSV or `FM_DASHBOARD_CSV`."
         )
         csv_path_input = st.text_input("CSV path (local / server)", value=default_csv_path())
         upload = st.file_uploader("Or upload FDP export (.csv)", type=["csv"])

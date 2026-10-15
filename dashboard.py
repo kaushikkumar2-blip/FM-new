@@ -45,7 +45,7 @@ if enriched.empty:
 st.caption(
     f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
     f"**Clients:** {', '.join(sel_clients)} · "
-    "D0 = PH-in on same day as create · D1/D2+ = PH-in lag +1 / +2 days"
+    "D0 = PH-in on create day or earlier · D1/D2+ = next day / +2 days · NP* = not-picked ageing (snapshot)"
 )
 
 st.subheader("By client")
