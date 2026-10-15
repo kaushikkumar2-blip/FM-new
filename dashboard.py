@@ -17,11 +17,15 @@ st.title("FM — client & hub pickup")
 clients = sorted(raw["seller_type"].dropna().unique())
 f1, f2, f3 = st.columns([3, 2, 1])
 with f1:
-    sel_clients = st.multiselect(
-        "Client(s)",
-        clients,
-        default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
-    )
+    all_clients = st.checkbox("All clients", value=False)
+    if all_clients:
+        sel_clients = list(clients)
+    else:
+        sel_clients = st.multiselect(
+            "Client(s)",
+            clients,
+            default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
+        )
 with f2:
     sel_date = st.date_input(
         "Date",
@@ -44,7 +48,7 @@ if enriched.empty:
 
 st.caption(
     f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
-    f"**Clients:** {', '.join(sel_clients)} · "
+    f"**Clients:** {f'All ({len(sel_clients)})' if len(sel_clients) == len(clients) else ', '.join(sel_clients)} · "
     "D0 = PH-in on create day or earlier · D1/D2+ = next day / +2 days · "
     "**MH no PH** = at MH but no PH-in (not true pendency) · **Pending** = no PH-in and no MH-in · NP* = ageing"
 )
