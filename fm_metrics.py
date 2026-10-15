@@ -7,7 +7,21 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
-BUNDLED_CSV = APP_DIR / "af502da717f8f1c350e1c4a91c56afaf.csv"
+SCHEMA_REV = 11
+BUNDLED_CSV_NAMES = (
+    "fm_nl_bundled_export.csv",
+    "af502da717f8f1c350e1c4a91c56afaf.csv",
+    "8a296c1ba2cacc19409c6fb7a2d79640.csv",
+)
+
+
+def find_bundled_csv() -> Path | None:
+    for name in BUNDLED_CSV_NAMES:
+        p = APP_DIR / name
+        if p.is_file() and p.stat().st_size > 0:
+            return p
+    csvs = [p for p in APP_DIR.glob("*.csv") if p.stat().st_size > 1_000_000]
+    return max(csvs, key=lambda p: p.stat().st_size) if csvs else None
 
 COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume", "fm_created")
 D0_COLS = ("d0_shipments", "cal_d0_picked")
@@ -35,26 +49,29 @@ TEXT_DIMS = frozenset({
 
 
 def default_csv_path() -> str:
+    """Optional override path for the text box; bundled file is auto-detected."""
     env = os.environ.get("FM_DASHBOARD_CSV", "").strip()
     if env and Path(env).is_file():
         return env
-    if BUNDLED_CSV.is_file():
-        return str(BUNDLED_CSV)
     return ""
 
 
 def resolve_csv_path(user_path: str) -> Path | None:
-    if user_path.strip():
-        p = Path(user_path.strip())
-        if p.is_file():
-            return p
     env = os.environ.get("FM_DASHBOARD_CSV", "").strip()
     if env:
         p = Path(env)
         if p.is_file():
             return p
-    if BUNDLED_CSV.is_file():
-        return BUNDLED_CSV
+    bundled = find_bundled_csv()
+    if bundled:
+        return bundled
+    if user_path.strip():
+        p = Path(user_path.strip())
+        if p.is_file():
+            return p
+        rel = APP_DIR / user_path.strip()
+        if rel.is_file():
+            return rel
     return None
 
 
@@ -84,7 +101,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str, _schema_rev: int = 10) -> pd.DataFrame:
+def load_data(csv_path: str, _schema_rev: int = SCHEMA_REV) -> pd.DataFrame:
     path = Path(csv_path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -178,7 +195,14 @@ def load_raw_interactive() -> pd.DataFrame:
             "D0 % = cal_d0_picked / cal_created_volume (PH-in on create day or earlier). "
             "NP age buckets = not-picked ageing as of export run. Bundled CSV or `FM_DASHBOARD_CSV`."
         )
-        csv_path_input = st.text_input("CSV path (local / server)", value=default_csv_path())
+        bundled = find_bundled_csv()
+        if bundled:
+            st.caption(f"Bundled export: `{bundled.name}`")
+        csv_path_input = st.text_input(
+            "CSV path override (optional)",
+            value=default_csv_path(),
+            key=f"fm_csv_path_{SCHEMA_REV}",
+        )
         upload = st.file_uploader("Or upload FDP export (.csv)", type=["csv"])
 
     if upload is not None:
@@ -187,8 +211,10 @@ def load_raw_interactive() -> pd.DataFrame:
     else:
         resolved = resolve_csv_path(csv_path_input)
         if resolved is None:
+            tried = ", ".join(BUNDLED_CSV_NAMES)
             st.error(
-                "No CSV found. Use bundled file, upload above, or set `FM_DASHBOARD_CSV`."
+                f"No CSV found under `{APP_DIR}`. Expected one of: {tried}. "
+                "Upload above, set `FM_DASHBOARD_CSV`, or redeploy with the bundled file."
             )
             st.stop()
         try:
