@@ -1,72 +1,39 @@
 import streamlit as st
 
-from fm_metrics import agg_table, build_metrics, date_bounds, load_raw_interactive
+from fm_metrics import load_raw_interactive
+from fm_views import render_daily_page, render_trends_page
 
 st.set_page_config(
-    page_title="FM Client / Hub",
+    page_title="FM NL Pickup",
     layout="wide",
     page_icon="📦",
     initial_sidebar_state="collapsed",
 )
 
+st.markdown(
+    """
+    <style>
+        section[data-testid="stSidebar"] { display: none; }
+        button[kind="headerNoPadding"] { display: none; }
+        [data-testid="collapsedControl"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.title("FM — NL first-mile pickup")
+
+view = st.radio(
+    "View",
+    options=["Client & hub (daily)", "Performance trends"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
 raw = load_raw_interactive()
-min_d, max_d = date_bounds(raw)
+st.divider()
 
-st.title("FM — client & hub pickup")
-
-clients = sorted(raw["seller_type"].dropna().unique())
-f1, f2, f3 = st.columns([3, 2, 1])
-with f1:
-    all_clients = st.checkbox("All clients", value=False)
-    if all_clients:
-        sel_clients = list(clients)
-    else:
-        sel_clients = st.multiselect(
-            "Client(s)",
-            clients,
-            default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
-        )
-with f2:
-    sel_date = st.date_input(
-        "Date",
-        value=max_d,
-        min_value=min_d,
-        max_value=max_d,
-        format="DD/MM/YYYY",
-    )
-with f3:
-    show_pct = st.toggle("Show %", value=False)
-
-day = raw[raw["reporting_date"].dt.date == sel_date]
-if sel_clients:
-    day = day[day["seller_type"].isin(sel_clients)]
-
-enriched = build_metrics(day)
-if enriched.empty:
-    st.warning("No rows for this date / client filter.")
-    st.stop()
-
-st.caption(
-    f"**Selected:** {sel_date.strftime('%d %b %Y')} · "
-    f"**Clients:** {f'All ({len(sel_clients)})' if len(sel_clients) == len(clients) else ', '.join(sel_clients)} · "
-    "D0 = PH-in on create day or earlier · D1/D2+ = next day / +2 days · "
-    "**MH no PH** = at MH but no PH-in (not true pendency) · **Pending** = no PH-in and no MH-in · NP* = ageing"
-)
-
-st.subheader("By client")
-client_tbl = agg_table(enriched, ["seller_type"], show_pct)
-st.dataframe(client_tbl.rename(columns={"seller_type": "Client"}), use_container_width=True, hide_index=True)
-
-st.subheader("By hub")
-hub_keys = [k for k in ("pickup_hub_name", "pickup_hub_city", "pickup_hub_zone", "seller_type") if k in enriched.columns]
-hub_tbl = agg_table(enriched, hub_keys, show_pct)
-st.dataframe(
-    hub_tbl.rename(columns={
-        "pickup_hub_name": "Hub",
-        "pickup_hub_city": "City",
-        "pickup_hub_zone": "Zone",
-        "seller_type": "Client",
-    }),
-    use_container_width=True,
-    hide_index=True,
-)
+if view == "Client & hub (daily)":
+    render_daily_page(raw)
+else:
+    render_trends_page(raw)

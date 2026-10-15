@@ -243,3 +243,26 @@ def load_raw_interactive() -> pd.DataFrame:
 def date_bounds(raw: pd.DataFrame) -> tuple[date, date]:
     available = sorted(raw["reporting_date"].dropna().dt.date.unique())
     return available[0], available[-1]
+
+
+def render_kpi_row(enriched: pd.DataFrame) -> None:
+    if enriched.empty or "Created" not in enriched.columns:
+        return
+    created = float(enriched["Created"].sum())
+    if created <= 0:
+        return
+    d0 = float(enriched["D0"].sum())
+    d1 = float(enriched["D1"].sum())
+    d2 = float(enriched["D2+"].sum())
+    pend = float(enriched["Pending"].sum())
+    has_mh = "MH no PH" in enriched.columns
+    mh = float(enriched["MH no PH"].sum()) if has_mh else 0.0
+    n = 6 if has_mh else 5
+    cols = st.columns(n)
+    cols[0].metric("Created", f"{int(created):,}")
+    cols[1].metric("D0 %", f"{d0 / created * 100:.1f}%")
+    cols[2].metric("D1 %", f"{d1 / created * 100:.1f}%")
+    cols[3].metric("D2+ %", f"{d2 / created * 100:.1f}%")
+    cols[4].metric("Pending %", f"{pend / created * 100:.1f}%")
+    if has_mh:
+        cols[5].metric("MH no PH %", f"{mh / created * 100:.1f}%")
