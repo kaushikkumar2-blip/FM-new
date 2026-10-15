@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
-BUNDLED_CSV = APP_DIR / "8a296c1ba2cacc19409c6fb7a2d79640.csv"
+BUNDLED_CSV = APP_DIR / "af502da717f8f1c350e1c4a91c56afaf.csv"
 
 COHORT_DENOM = ("total_shipments", "cal_created_volume", "created_volume", "fm_created")
 D0_COLS = ("d0_shipments", "cal_d0_picked")
@@ -84,7 +84,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Loading FDP export…")
-def load_data(csv_path: str, _schema_rev: int = 9) -> pd.DataFrame:
+def load_data(csv_path: str, _schema_rev: int = 10) -> pd.DataFrame:
     path = Path(csv_path)
     if not path.is_file():
         raise FileNotFoundError(path)
