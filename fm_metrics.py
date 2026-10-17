@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 APP_DIR = Path(__file__).resolve().parent
-SCHEMA_REV = 13
+SCHEMA_REV = 14
 BUNDLED_CSV_NAMES = (
     "fm_nl_bundled_export.csv",
     "af502da717f8f1c350e1c4a91c56afaf.csv",
