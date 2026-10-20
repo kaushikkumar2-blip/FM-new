@@ -82,15 +82,18 @@ def render_trends_page(raw) -> None:
     min_d, max_d = date_bounds(raw)
     clients = sorted(raw["seller_type"].dropna().unique())
 
-    st.subheader("1. Client")
-    client = st.selectbox(
-        "Client",
-        options=[None] + clients,
-        format_func=lambda c: "Select a client…" if c is None else c,
-        label_visibility="collapsed",
-    )
-    if client is None:
-        st.info("Choose a client to unlock date range and performance table.")
+    st.subheader("1. Client(s)")
+    all_clients = st.checkbox("All clients", value=False)
+    if all_clients:
+        sel_clients = list(clients)
+    else:
+        sel_clients = st.multiselect(
+            "Client(s)",
+            clients,
+            default=[c for c in ("FCY", "AIL") if c in clients] or list(clients[:1]),
+        )
+    if not sel_clients:
+        st.info("Select at least one client, or turn on **All clients**.")
         return
 
     st.subheader("2. Range & granularity")
@@ -127,26 +130,41 @@ def render_trends_page(raw) -> None:
         return
 
     mask = (
-        (raw["seller_type"] == client)
+        raw["seller_type"].isin(sel_clients)
         & (raw["reporting_date"].dt.date >= start_d)
         & (raw["reporting_date"].dt.date <= end_d)
     )
     slice_df = raw.loc[mask]
     enriched = build_metrics(slice_df)
     if enriched.empty:
-        st.warning("No rows for this client and date range.")
+        st.warning("No rows for this client selection and date range.")
         return
 
     enriched = enriched.copy()
     enriched["Period"] = period_label(enriched["reporting_date"], grain)
+    client_label = (
+        f"All ({len(sel_clients)})"
+        if len(sel_clients) == len(clients)
+        else ", ".join(sel_clients)
+    )
     st.caption(
-        f"**{client}** · {start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')} · **{grain}**"
+        f"**Clients:** {client_label} · "
+        f"{start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')} · **{grain}**"
     )
     render_kpi_row(enriched)
 
-    st.subheader("3. Client total")
+    st.subheader("3. Total (selected clients)")
     tbl = agg_table(enriched, ["Period"], show_pct, sort_by_period=True)
     st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+    if len(sel_clients) > 1:
+        st.subheader("By client")
+        by_client = agg_table(enriched, ["Period", "seller_type"], show_pct, sort_by_period=True)
+        st.dataframe(
+            by_client.rename(columns={"seller_type": "Client"}),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     hubs = hub_columns(enriched)
     if not hubs:
